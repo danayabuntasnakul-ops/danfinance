@@ -460,6 +460,32 @@ function DRAFTS() {
   if (MODE === 'live') return store.views.inbox.map(function (id) { return store.get(id); }).filter(Boolean);
   return store.events.filter(function (e) { return e.status === 'draft' && !e.deletedAt; });
 }
+/** ร่างที่เข้ามาเอง (SMS อีเมล สลิป) ซึ่งน่าจะซ้ำกับรายการที่บันทึกไว้แล้ว: บัญชีเดียวกัน ยอดเท่ากัน วันห่างกันไม่เกิน 1 วัน
+ *  จับคู่หนึ่งต่อหนึ่ง (ค่ารถ 2 เที่ยวยอดเท่ากัน บันทึกเองไว้ 1 = ติดป้ายแค่ร่างเดียว) · แค่ติดป้าย ไม่ลบเอง */
+var AUTO_SRC = { sms: 1, email: 1, slip: 1 };
+function dupPairs() {
+  var touches = function (e, acc) { return e.accountId === acc || e.fromAccount === acc || e.toAccount === acc; };
+  var drafts = DRAFTS().filter(function (d) { return AUTO_SRC[d.source] && (d.accountId || d.fromAccount); });
+  var posted = store.counted();
+  var used = {}, out = {};
+  var day = function (s) { return Date.parse(s + 'T00:00:00Z') / 864e5; };
+  var cands = [];
+  drafts.forEach(function (d) {
+    var acc = d.accountId || d.fromAccount;
+    posted.forEach(function (p) {
+      if (p.amount !== d.amount || !touches(p, acc)) return;
+      if (d.sourceRef && p.sourceRef === d.sourceRef) return;
+      var gap = Math.abs(day(p.date) - day(d.date));
+      if (gap > 1) return;
+      var t = d.occurredAt && p.occurredAt ? Math.abs(Date.parse(d.occurredAt) - Date.parse(p.occurredAt)) / 6e4 : gap * 1440 + 720;
+      cands.push({ d: d.id, p: p, score: (p.kind === d.kind ? 0 : 1e6) + (AUTO_SRC[p.source] ? 5e5 : 0) + t });
+    });
+  });
+  cands.sort(function (a, b) { return a.score - b.score; });
+  cands.forEach(function (c) { if (!out[c.d] && !used[c.p.id]) { out[c.d] = c.p; used[c.p.id] = true; } });
+  return out;
+}
+function dupOf(e) { return e && e.status === 'draft' ? dupPairs()[e.id] || null : null; }
 function activeAccounts(keep) { return store.accounts.filter(function (a) { return !a.archived || a.id === keep; }); }
 function activeCats(book, type, keep) { return store.categories.filter(function (c) { return c.book === book && c.type === type && (!c.archived || c.id === keep); }); }
 
@@ -743,6 +769,17 @@ function balanceCard(bal) {
   return h + '</section>';
 }
 /** ยอดตาม SMS ธนาคารล่าสุดของแต่ละบัญชี เทียบกับยอดในแอป ณ เวลาเดียวกัน (นับร่างจาก SMS/อีเมลที่รอยืนยันด้วย) */
+function dupSum(acc) {
+  var dp = dupPairs(), t = 0, any = false;
+  DRAFTS().forEach(function (d) {
+    if (!dp[d.id]) return;
+    var x = 0;
+    if (d.kind === 'transfer') { if (d.toAccount === acc) x += d.amount; if (d.fromAccount === acc) x -= d.amount; }
+    else if (d.accountId === acc) x = d.kind === 'expense' ? -d.amount : d.amount;
+    if (x) { t += x; any = true; }
+  });
+  return any ? t : null;
+}
 function bankChecks() { return (store.views && store.views.bankCheck) || []; }
 function bankCheckHTML() {
   return bankChecks().filter(function (c) { return c.bank !== c.app; }).map(function (c) {
@@ -750,6 +787,7 @@ function bankCheckHTML() {
     var sgn = function (n) { return (n < 0 ? '−' : '') + money(Math.abs(n)); };
     return '<div class="banner"><p><strong class="warn">ยอด' + esc(c.name) + 'ในแอปไม่ตรงกับ SMS ธนาคาร</strong><br>' +
       '<span class="small">SMS ' + DF.format(at) + ' ' + TF.format(at) + ' น. บอกคงเหลือ ' + sgn(c.bank) + ' บาท · ในแอป ณ เวลาเดียวกัน ' + sgn(c.app) + ' บาท · ' + (diff > 0 ? 'แอปมากกว่า ' : 'แอปน้อยกว่า ') + money(Math.abs(diff)) + ' บาท</span><br>' +
+      (dupSum(c.accountId) === diff ? '<span class="small"><strong>ต่างเท่ากับยอดร่างที่ติดป้าย “อาจซ้ำ” พอดี</strong> ย้ายร่างนั้นเข้าถังขยะแล้วยอดจะตรง</span><br>' : '') +
       '<span class="small muted">' + (diff > 0 ? 'น่าจะมีรายการเงินออกที่ยังไม่ได้บันทึก หรือรายรับที่บันทึกซ้ำ' : 'น่าจะมีรายการเงินเข้าที่ยังไม่ได้บันทึก หรือรายจ่ายที่บันทึกซ้ำ') +
       ' · นับร่างจาก SMS ที่รอยืนยันแล้ว · ถ้ายอดตั้งต้นของบัญชีไม่ตรงกับวันที่เริ่มใช้ ก็ทำให้ต่างได้</span></p><button class="btn" data-act="balances">ดูบัญชี</button></div>';
   }).join('');
@@ -847,7 +885,7 @@ function catChart(sum) {
 function rowHTML(e) {
   var i = info(e);
   var sub = i.cat + ' · ' + i.acc + (S.book === 'all' || e.kind === 'transfer' || e.status === 'draft' ? ' · ' + i.book : '');
-  var warn = e.status !== 'draft' && e.kind !== 'transfer' && !e.accountId ? '<span class="tag warn">ยังไม่ระบุบัญชี</span>' : '';
+  var warn = e.status !== 'draft' && e.kind !== 'transfer' && !e.accountId ? '<span class="tag warn">ยังไม่ระบุบัญชี</span>' : dupOf(e) ? '<span class="tag warn">อาจซ้ำ</span>' : '';
   return '<button class="row" data-act="detail" data-id="' + e.id + '"><span class="t1">' + esc(e.title || i.cat) + warn + '</span>' +
     '<span class="amt ' + i.cls + '">' + i.sign + money(e.amount) + '<small>' + i.label + '</small></span>' +
     '<span class="t2">' + thDate(e.date) + ' · ' + esc(sub) + '</span></button>';
@@ -891,7 +929,10 @@ function renderOverview() {
       ['personal', 'work'].map(function (b) { var p = sum.perBook[b]; return '<div class="r"><span>' + BOOK_TH[b] + '</span><span class="income">+' + money(p.income) + '</span><span class="expense">−' + money(p.expense) + '</span><span>' + (p.net < 0 ? '−' : '+') + money(Math.abs(p.net)) + '</span></div>'; }).join('') +
       '</div><p class="note">ตัดเงินโอนระหว่างสมุด ' + sum.transfers + ' รายการออกจากรายรับรายจ่ายรวมแล้ว</p></div>');
   }
-  if (drafts.length) out.push('<div class="banner info"><p>มีฉบับร่าง ' + drafts.length + ' รายการรอตรวจ ยังไม่นับในยอด งบ หรือกราฟ</p><button class="btn" data-act="detail" data-id="' + drafts[0].id + '">ตรวจร่าง</button></div>');
+  if (drafts.length) {
+    var dups = dupPairs(), dupIds = drafts.filter(function (d) { return dups[d.id]; });
+    out.push('<div class="banner info"><p>มีฉบับร่าง ' + drafts.length + ' รายการรอตรวจ ยังไม่นับในยอด งบ หรือกราฟ' + (dupIds.length ? '<br><span class="small warn">' + dupIds.length + ' รายการอาจซ้ำกับที่บันทึกไว้แล้ว</span>' : '') + '</p><button class="btn" data-act="detail" data-id="' + (dupIds[0] || drafts[0]).id + '">ตรวจร่าง</button></div>');
+  }
   if (due !== 0) {
     out.push('<div class="banner"><p><strong>' + (due > 0 ? 'งานค้างคืนเงินส่วนตัว ' : 'ส่วนตัวค้างคืนเงินงาน ') + money(Math.abs(due)) + ' บาท</strong><br><span class="small muted">จากรายการที่จ่ายค่างานด้วยเงินส่วนตัว การคืนจะบันทึกเป็นเงินโอน ไม่เพิ่มรายจ่ายงานซ้ำ</span></p><button class="btn" data-act="repay">บันทึกการคืนเงิน</button></div>');
   }
@@ -1549,6 +1590,8 @@ function formHTML() {
     h += '<div class="field"><span class="lab">ใช้บ่อย</span><div class="qchips">' + store.quick.map(function (q) { return '<button type="button" class="qchip" data-act="quick" data-id="' + q.id + '">' + esc(q.label) + (q.template.amount ? '<small>' + money(q.template.amount) + '</small>' : '') + '</button>'; }).join('') + '</div></div>';
   }
   if (F.wasDraft) h += '<div class="banner info"><p class="small">ร่างนี้มาจาก' + (SRC_TH[F.source] || 'การกรอก') + ' ' + esc(F.note) + ' ตรวจและเลือกสมุดก่อนบันทึก</p></div>';
+  var fdp = F.wasDraft && F.id ? dupOf(store.get(F.id)) : null;
+  if (fdp) h += '<div class="banner"><p class="small"><strong class="warn">อาจซ้ำ</strong> กับ “' + esc(fdp.title || info(fdp).cat) + '” ' + thDate(fdp.date) + ' ' + money(fdp.amount) + ' บาท ที่บันทึกไว้แล้ว · ถ้าเป็นรายการเดียวกัน กดยกเลิก แล้วย้ายร่างเข้าถังขยะแทน</p></div>';
   if (F.kind !== 'refund') {
     h += '<div class="field"><span class="lab">' + (F.kind === 'transfer' ? 'จากสมุด' : 'สมุดเงิน') + '</span>' + segBtns('book', bookList, F.book) + (er.book ? '<span class="err">' + er.book + '</span>' : '') + '</div>';
     h += '<div class="field"><span class="lab">ประเภท</span>' + segBtns('kind', [['income', 'รายรับ'], ['expense', 'รายจ่าย'], ['transfer', 'โอน']], F.kind) + '</div>';
@@ -1604,7 +1647,11 @@ function renderSheet() {
   } else {
     var e = store.get(detailId), i = info(e);
     head = '<button class="btn" data-act="close">ปิด</button><h2 id="sheetTitle">รายละเอียด</h2><span></span>';
-    body = '<div><p class="' + i.cls + '" style="font-size:1.8rem;font-weight:600">' + i.sign + money(e.amount) + ' <span class="small muted">บาท</span></p><p>' + esc(e.title) + '</p><p class="small ' + i.cls + '">' + i.label + '</p></div>' +
+    var dp = dupOf(e);
+    body = (dp ? '<div class="banner"><p><strong class="warn">อาจซ้ำกับรายการที่บันทึกไว้แล้ว</strong><br><span class="small">“' + esc(dp.title || info(dp).cat) + '” ' + thDate(dp.date) + (dp.occurredAt ? ' ' + TF.format(new Date(dp.occurredAt)) + ' น.' : '') + ' · ' + money(dp.amount) + ' บาท · ' + esc(info(dp).acc) + ' · ' + (SRC_TH[dp.source] || dp.source) + '</span><br>' +
+      '<span class="small muted">ถ้าเป็นรายการเดียวกัน ย้ายร่างนี้เข้าถังขยะ ยอดจะไม่นับซ้ำ · ถ้าเป็นคนละรายการ (เช่น จ่ายยอดเท่ากัน 2 ครั้ง) กด ตรวจและบันทึก ตามปกติ</span></p>' +
+      '<div class="actions" style="margin:0"><button class="btn danger" data-act="trash" data-id="' + e.id + '">ซ้ำ · ย้ายร่างเข้าถังขยะ</button><button class="btn" data-act="detail" data-id="' + dp.id + '">ดูรายการเดิม</button></div></div>' : '') +
+      '<div><p class="' + i.cls + '" style="font-size:1.8rem;font-weight:600">' + i.sign + money(e.amount) + ' <span class="small muted">บาท</span></p><p>' + esc(e.title) + '</p><p class="small ' + i.cls + '">' + i.label + '</p></div>' +
       '<dl class="kv"><dt>สมุด</dt><dd>' + esc(i.book) + '</dd><dt>วันที่</dt><dd>' + thDate(e.date) + '</dd><dt>หมวด</dt><dd>' + esc(i.cat) + '</dd><dt>บัญชี</dt><dd>' + esc(i.acc) + '</dd>' +
       (e.projectId ? '<dt>โครงการ</dt><dd>' + esc(store.project(e.projectId).name) + '</dd>' : '') +
       (e.refundOf ? '<dt>คืนเงินของ</dt><dd>' + esc((store.get(e.refundOf) || {}).title) + '</dd>' : '') +
