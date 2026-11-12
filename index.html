@@ -1741,7 +1741,8 @@ function gRun(job, msg) {
 function gDelete() {
   if (!G || !G.id && G.type !== 'budget') return;
   var t = G.type, id = G.id;
-  var q = { quick: 'ลบปุ่ม “' + G.label + '” ?', recurring: 'ลบรายการประจำ “' + G.name + '” ? (ร่างที่สร้างไปแล้วยังอยู่)', budget: 'ลบงบสมุด' + BOOK_TH[G.book] + ' ' + thMonth(G.month) + ' ?' }[t];
+  // สร้างเฉพาะข้อความของชนิดที่ลบ (เดิมสร้างทั้ง 3 แบบ แล้วข้อความงบพังเพราะปุ่มใช้บ่อย/รายการประจำไม่มีเดือน → ลบไม่ได้)
+  var q = t === 'quick' ? 'ลบปุ่ม “' + G.label + '” ?' : t === 'recurring' ? 'ลบรายการประจำ “' + G.name + '” ? (ร่างที่สร้างไปแล้วยังอยู่)' : 'ลบงบสมุด' + BOOK_TH[G.book] + ' ' + thMonth(G.month) + ' ?';
   if (!window.confirm(q)) return;
   gRun(function () { return t === 'quick' ? DB().deleteQuick(id) : t === 'recurring' ? DB().deleteRecurring(id) : DB().setBudget(G.book, G.month, null); }, 'ลบแล้ว');
 }
