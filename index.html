@@ -729,10 +729,24 @@ function balanceCard(bal) {
   var notes = [];
   if (S.book !== 'all') notes.push('นับเฉพาะส่วนที่เป็นของสมุด' + BOOK_TH[S.book]);
   notes.push('รวมทุกรายการที่บันทึกแล้วถึงวันนี้ ไม่ขึ้นกับเดือนที่เลือก');
+  var bc = bankChecks();
+  if (bc.length && bc.every(function (c) { return c.bank === c.app; })) notes.push('✓ ตรงกับยอดคงเหลือใน SMS ธนาคารล่าสุด' + (bc.some(function (c) { return c.drafts; }) ? ' (เมื่อยืนยันร่างจาก SMS ครบ)' : ''));
   h += '<p class="note">' + notes.join(' · ') + '</p>';
   if (bal.missingAccount) h += '<p class="small warn">มี ' + bal.missingAccount + ' รายการที่ยังไม่ระบุบัญชี ยอดนี้จึงยังไม่ครบ</p>';
   if (bal.noOpening) h += '<p class="small warn">มี ' + bal.noOpening + ' บัญชีที่ยังไม่ตั้งยอดตั้งต้น</p>';
   return h + '</section>';
+}
+/** ยอดตาม SMS ธนาคารล่าสุดของแต่ละบัญชี เทียบกับยอดในแอป ณ เวลาเดียวกัน (นับร่างจาก SMS/อีเมลที่รอยืนยันด้วย) */
+function bankChecks() { return (store.views && store.views.bankCheck) || []; }
+function bankCheckHTML() {
+  return bankChecks().filter(function (c) { return c.bank !== c.app; }).map(function (c) {
+    var at = new Date(c.at), diff = c.app - c.bank;
+    var sgn = function (n) { return (n < 0 ? '−' : '') + money(Math.abs(n)); };
+    return '<div class="banner"><p><strong class="warn">ยอด' + esc(c.name) + 'ในแอปไม่ตรงกับ SMS ธนาคาร</strong><br>' +
+      '<span class="small">SMS ' + DF.format(at) + ' ' + TF.format(at) + ' น. บอกคงเหลือ ' + sgn(c.bank) + ' บาท · ในแอป ณ เวลาเดียวกัน ' + sgn(c.app) + ' บาท · ' + (diff > 0 ? 'แอปมากกว่า ' : 'แอปน้อยกว่า ') + money(Math.abs(diff)) + ' บาท</span><br>' +
+      '<span class="small muted">' + (diff > 0 ? 'น่าจะมีรายการเงินออกที่ยังไม่ได้บันทึก หรือรายรับที่บันทึกซ้ำ' : 'น่าจะมีรายการเงินเข้าที่ยังไม่ได้บันทึก หรือรายจ่ายที่บันทึกซ้ำ') +
+      ' · นับร่างจาก SMS ที่รอยืนยันแล้ว · ถ้ายอดตั้งต้นของบัญชีไม่ตรงกับวันที่เริ่มใช้ ก็ทำให้ต่างได้</span></p><button class="btn" data-act="balances">ดูบัญชี</button></div>';
+  }).join('');
 }
 function statCards(sum) {
   return '<div class="stats">' +
@@ -790,7 +804,7 @@ function renderOverview() {
       (store.accounts.length ? '' : '<button class="btn' + (store.categories.length ? ' primary' : '') + '" data-act="gnew" data-v="account">+ เพิ่มบัญชี</button>') + '</div></div>');
   }
   if (S.ovTab === 'charts') { renderCharts(out); return; }
-  if (store.accounts.length) out.push(balanceCard(bal));
+  if (store.accounts.length) { out.push(balanceCard(bal)); out.push(bankCheckHTML()); }
 
   if (!counted.length && !drafts.length) {
     out.push('<div class="card empty"><h2>ยังไม่มีรายการใน' + bookName + 'เดือนนี้</h2><ol class="muted">' +

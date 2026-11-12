@@ -2,7 +2,7 @@
  * ตัวเชื่อมฐานข้อมูลจริง (Supabase) ของสมุดเงิน · รอบ 2
  * - รับ client ของ supabase-js ที่ล็อกอินแล้ว · ทุกคำสั่งทำงานด้วยสิทธิ์ของ Dan (RLS ที่ฐานข้อมูล)
  * - บันทึกผ่าน save_transaction · แก้ผ่าน update_transaction (ส่งรุ่นที่เห็นอยู่ไปด้วย)
- * - ยอดอ่านจาก view: v_balances v_pnl v_dues v_inbox v_missing_account
+ * - ยอดอ่านจาก view: v_balances v_pnl v_dues v_inbox v_missing_account · v_bank_check (รอบ 3 · ถ้ายังไม่ได้รัน 004 = ข้ามไป)
  * - แปลงแถวของฐานข้อมูลเป็นรูปเดียวกับ ledger.js เพื่อให้หน้าจอและแผนภูมิเดิมใช้ต่อได้ทั้งหมด
  * - ไม่มีข้อมูลจริงหรือคีย์ลับในไฟล์นี้
  */
@@ -98,13 +98,17 @@
     vPnl: ['v_pnl', ['id']],
     vDues: ['v_dues', ['user_id']],
     vInbox: ['v_inbox', ['created_at', 'id']],
-    vMissing: ['v_missing_account', ['id']]
+    vMissing: ['v_missing_account', ['id']],
+    vBankCheck: ['v_bank_check', ['account_id'], true] // ไม่บังคับ: ยังไม่ได้รัน 004 → ไม่มีการเทียบยอดกับ SMS แต่แอปใช้ได้ตามปกติ
   };
 
   /** โหลดทุกตารางและ view ของผู้ใช้ที่ล็อกอินอยู่ */
   function loadAll(client) {
     var keys = Object.keys(LOAD);
-    return Promise.all(keys.map(function (k) { return fetchAll(client, LOAD[k][0], LOAD[k][1]); })).then(function (lists) {
+    return Promise.all(keys.map(function (k) {
+      var p = fetchAll(client, LOAD[k][0], LOAD[k][1]);
+      return LOAD[k][2] ? p.catch(function () { return []; }) : p;
+    })).then(function (lists) {
       var raw = {};
       keys.forEach(function (k, i) { raw[k] = lists[i]; });
       return raw;
@@ -136,6 +140,7 @@
       dues: raw.vDues.length ? num(raw.vDues[0].work_owes_personal) : 0,
       inbox: raw.vInbox.map(function (r) { return r.id; }),
       missing: raw.vMissing.length,
+      bankCheck: (raw.vBankCheck || []).map(function (b) { return { accountId: b.account_id, name: b.name, at: b.at, bank: num(b.bank_balance), app: num(b.app_balance), drafts: Number(b.drafts_before) || 0 }; }),
       loadedAt: new Date()
     };
     return s;
