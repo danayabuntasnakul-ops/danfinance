@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#111315">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="สมุดเงิน">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
@@ -172,9 +172,9 @@ tbody tr:focus-visible { outline-offset: -2px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(80px + env(safe-area-inset-bottom, 0px)); z-index: 50; background: var(--fg); color: var(--on-light); padding: 10px 16px; border-radius: 12px; font-weight: 500; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.5); }
 .acc { display: grid; gap: 8px; }
-.acc > button { display: flex; justify-content: space-between; align-items: center; width: 100%; background: var(--surface); border: 0; border-radius: var(--r); padding: 14px 16px; min-height: 52px; text-align: left; font-weight: 500; }
-.acc > button[aria-expanded="true"] { border-radius: var(--r) var(--r) 0 0; }
-.acc .panel { background: var(--surface); border-radius: 0 0 var(--r) var(--r); padding: 0 16px 16px; margin-top: -8px; display: grid; gap: 10px; min-width: 0; }
+.acc > div > button { display: flex; justify-content: space-between; align-items: center; width: 100%; background: var(--surface); border: 0; border-radius: var(--r); padding: 14px 16px; min-height: 52px; text-align: left; font-weight: 500; }
+.acc > div > button[aria-expanded="true"] { border-radius: var(--r) var(--r) 0 0; }
+.acc .panel { background: var(--surface); border-radius: 0 0 var(--r) var(--r); padding: 4px 16px 16px; display: grid; gap: 10px; min-width: 0; }
 textarea.csv { width: 100%; min-height: 160px; font-family: ui-monospace, Menlo, monospace; font-size: .78rem; background: var(--bg); border: 1px solid var(--field-line); border-radius: 10px; padding: 10px; }
 .testrow { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .testrow .d { grid-column: 2; font-size: .82rem; color: var(--muted); }
@@ -236,6 +236,7 @@ details.tbl .tw { overflow-x: auto; }
 .catchips button.arch { color: var(--muted); text-decoration: line-through; }
 
 @media (max-width: 420px) {
+  .acc .panel th, .acc .panel td, details.tbl th, details.tbl td { padding: 8px 6px; font-size: .84rem; }
   .stats { grid-template-columns: 1fr 1fr; }
   .stats .stat:last-child { grid-column: 1 / -1; }
   .seg button { padding: 8px 10px; }
