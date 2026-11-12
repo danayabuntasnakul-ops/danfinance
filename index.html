@@ -230,6 +230,11 @@ details.tbl .tw { overflow-x: auto; }
 .erow:last-child { border-bottom: 0; }
 .erow > span { min-width: 0; overflow-wrap: anywhere; }
 .erow .btn { flex: none; }
+button.erow { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); color: inherit; font: inherit; text-align: left; padding: 4px 2px; min-height: 44px; }
+button.erow:last-child { border-bottom: 0; }
+button.erow:hover { background: var(--surface-2); }
+button.erow .go { color: var(--muted); margin-left: 6px; }
+.row.open-bal { cursor: default; background: var(--surface-2); }
 .catchips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .catchips button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; padding: 4px 10px; min-height: 36px; }
 .catchips button.add { border-style: dashed; color: var(--muted); background: transparent; }
@@ -463,7 +468,7 @@ var store = seedStore(false);
 var S = {
   view: 'overview', book: 'personal', month: TODAY.slice(0, 7) >= '2026-11' ? '2026-11' : TODAY.slice(0, 7),
   q: { text: '', kind: 'all', categoryId: '', accountId: '', from: '', to: '' },
-  planTab: 'budget', open: {}, empty: false,
+  planTab: 'budget', open: {}, empty: false, acct: null,
   ovTab: 'summary', chart: { acct: 'bar', cat: 'bar', trend: 'bar', pace: 'line' },
   next: 'ok', slow: false,
   sync: { state: 'idle', at: null }, check: []
@@ -725,10 +730,11 @@ function balanceCard(bal) {
   var lbl = S.book === 'all' ? 'เงินในทุกบัญชีตอนนี้' : 'เงิน' + BOOK_TH[S.book] + 'ตอนนี้';
   var h = '<section class="card"><div class="card-h"><h2>' + lbl + '</h2><button class="linkbtn" data-act="balances">ดูทุกบัญชี</button></div>' +
     '<p class="num" style="font-size:clamp(1.5rem,7vw,2.1rem);font-weight:600;line-height:1.2">' + (total < 0 ? '−' : '') + money(Math.abs(total)) + ' <span class="small muted" style="font-weight:400">บาท</span></p>';
-  if (rows.length) h += '<div>' + rows.map(function (r) { var v = pick(r); return '<div class="erow" style="min-height:40px;padding:4px 0"><span>' + esc(r.account.name) + '</span><span class="num' + (v < 0 ? ' expense' : '') + '">' + (v < 0 ? '−' : '') + money(Math.abs(v)) + '</span></div>'; }).join('') + '</div>';
+  if (rows.length) h += '<div>' + rows.map(function (r) { var v = pick(r); return '<button class="erow" data-act="acct" data-id="' + r.account.id + '" aria-label="ดูรายการเข้าออกของ ' + esc(r.account.name) + '"><span>' + esc(r.account.name) + '</span><span class="num' + (v < 0 ? ' expense' : '') + '">' + (v < 0 ? '−' : '') + money(Math.abs(v)) + '<span class="go" aria-hidden="true">›</span></span></button>'; }).join('') + '</div>';
   var notes = [];
   if (S.book !== 'all') notes.push('นับเฉพาะส่วนที่เป็นของสมุด' + BOOK_TH[S.book]);
   notes.push('รวมทุกรายการที่บันทึกแล้วถึงวันนี้ ไม่ขึ้นกับเดือนที่เลือก');
+  if (rows.length) notes.push('แตะชื่อบัญชีเพื่อดูรายการเข้าออก');
   var bc = bankChecks();
   if (bc.length && bc.every(function (c) { return c.bank === c.app; })) notes.push('✓ ตรงกับยอดคงเหลือใน SMS ธนาคารล่าสุด' + (bc.some(function (c) { return c.drafts; }) ? ' (เมื่อยืนยันร่างจาก SMS ครบ)' : ''));
   h += '<p class="note">' + notes.join(' · ') + '</p>';
@@ -747,6 +753,69 @@ function bankCheckHTML() {
       '<span class="small muted">' + (diff > 0 ? 'น่าจะมีรายการเงินออกที่ยังไม่ได้บันทึก หรือรายรับที่บันทึกซ้ำ' : 'น่าจะมีรายการเงินเข้าที่ยังไม่ได้บันทึก หรือรายจ่ายที่บันทึกซ้ำ') +
       ' · นับร่างจาก SMS ที่รอยืนยันแล้ว · ถ้ายอดตั้งต้นของบัญชีไม่ตรงกับวันที่เริ่มใช้ ก็ทำให้ต่างได้</span></p><button class="btn" data-act="balances">ดูบัญชี</button></div>';
   }).join('');
+}
+// ---------- หน้าบัญชี (แตะชื่อบัญชีในการ์ดยอดเงิน) ----------
+/** รายการที่บันทึกแล้วซึ่งแตะบัญชีนี้ เรียงเก่าไปใหม่ พร้อมยอดคงเหลือหลังแต่ละรายการ
+ *  ยอดคงเหลือนับย้อนจากยอดปัจจุบันของการ์ดยอดเงิน ตัวเลขจึงตรงกับการ์ดเสมอ */
+function accountLedger(id, nowReal) {
+  var key = function (e) { return e.date + '|' + (e.occurredAt || '') + '|' + (e.createdAt || '') + '|' + e.id; };
+  var rows = [];
+  store.counted().forEach(function (e) {
+    var d = 0, hit = false;
+    L.effects(e).alloc.forEach(function (x) { if (x.accountId === id) { d += x.delta; hit = true; } });
+    if (hit) rows.push({ e: e, delta: d, k: key(e) });
+  });
+  rows.sort(function (a, b) { return a.k < b.k ? -1 : a.k > b.k ? 1 : 0; });
+  var bal = nowReal;
+  for (var i = rows.length - 1; i >= 0; i--) { rows[i].after = bal; bal -= rows[i].delta; }
+  return { rows: rows, start: bal };
+}
+function renderAccount() {
+  var bal = BAL();
+  var r = bal.accounts.find(function (x) { return x.account.id === S.acct; });
+  if (!r) { S.acct = null; renderOverview(); return; }
+  var a = r.account, mr = range();
+  var led = accountLedger(a.id, r.real);
+  var before = led.rows.filter(function (x) { return x.e.date < mr.from; });
+  var inMonth = led.rows.filter(function (x) { return x.e.date >= mr.from && x.e.date <= mr.to; });
+  var after = led.rows.filter(function (x) { return x.e.date > mr.to; });
+  var open = before.length ? before[before.length - 1].after : led.start;
+  var close = inMonth.length ? inMonth[inMonth.length - 1].after : open;
+  var sgn = function (n) { return (n < 0 ? '−' : '') + money(Math.abs(n)); };
+  var inSum = 0, outSum = 0;
+  inMonth.forEach(function (x) { if (x.delta > 0) inSum += x.delta; else outSum -= x.delta; });
+  var out = [];
+  out.push('<button class="linkbtn" data-act="acctback">‹ กลับภาพรวม</button>');
+  var h = '<section class="card"><div class="card-h"><h2>' + esc(a.name) + '</h2><span class="note">' + (a.archived ? 'เก็บแล้ว · ' : '') + 'ยอดจริงในบัญชี</span></div>' +
+    '<p class="num" style="font-size:clamp(1.5rem,7vw,2.1rem);font-weight:600;line-height:1.2">' + sgn(r.real) + ' <span class="small muted" style="font-weight:400">บาท ตอนนี้</span></p>';
+  if (r.byBook.personal !== 0 && r.byBook.work !== 0) h += '<p class="small muted">เป็นของสมุดส่วนตัว ' + sgn(r.byBook.personal) + ' · สมุดงาน ' + sgn(r.byBook.work) + ' บาท</p>';
+  var bc = bankChecks().find(function (c) { return c.accountId === a.id; });
+  if (bc) {
+    var at = new Date(bc.at);
+    h += '<p class="small ' + (bc.bank === bc.app ? 'muted' : 'warn') + '">SMS ล่าสุด ' + DF.format(at) + ' ' + TF.format(at) + ' น. บอกคงเหลือ ' + sgn(bc.bank) + ' บาท · ' + (bc.bank === bc.app ? '✓ ตรงกับแอป' : 'ในแอป ณ เวลาเดียวกัน ' + sgn(bc.app) + ' บาท ยังไม่ตรง') + '</p>';
+  }
+  out.push(h + '</section>');
+  var drafts = DRAFTS().filter(function (e) { return e.accountId === a.id || e.fromAccount === a.id || e.toAccount === a.id; });
+  if (drafts.length) out.push('<div class="banner info"><p>บัญชีนี้มีร่าง ' + drafts.length + ' รายการรอยืนยัน ยังไม่นับในยอดด้านล่าง</p><button class="btn" data-act="detail" data-id="' + drafts[0].id + '">ตรวจร่าง</button></div>');
+  out.push('<div class="stats">' +
+    '<div class="stat"><span class="lbl">เงินเข้า</span><span class="val income num">+' + money(inSum) + '</span><span class="unit">บาท · ' + thMonth(S.month) + '</span></div>' +
+    '<div class="stat"><span class="lbl">เงินออก</span><span class="val expense num">−' + money(outSum) + '</span><span class="unit">บาท · ' + thMonth(S.month) + '</span></div>' +
+    '<div class="stat"><span class="lbl">ยอดสิ้นเดือน</span><span class="val num">' + sgn(close) + '</span><span class="unit">บาท' + (after.length ? ' · หลังจากนั้นมีอีก ' + after.length + ' รายการ' : '') + '</span></div></div>');
+  var list = inMonth.slice().reverse().map(function (x) {
+    var e = x.e, i = info(e);
+    var up = x.delta > 0, zero = x.delta === 0;
+    var lbl = e.kind === 'transfer' ? (zero ? 'ย้ายข้ามสมุด ยอดบัญชีไม่เปลี่ยน' : up ? 'โอนเข้า' : 'โอนออก') : i.label;
+    var when = thDate(e.date) + (e.occurredAt ? ' ' + TF.format(new Date(e.occurredAt)) + ' น.' : '');
+    var sub = e.kind === 'transfer' ? (zero ? 'สมุด' + BOOK_TH[e.fromBook] + ' → สมุด' + BOOK_TH[e.toBook] : up ? 'จาก ' + accName(e.fromAccount) : 'ไป ' + accName(e.toAccount)) : i.cat + ' · ' + i.book;
+    return '<button class="row" data-act="detail" data-id="' + e.id + '"><span class="t1">' + esc(e.title || i.cat) + '</span>' +
+      '<span class="amt ' + (zero ? 'transfer' : up ? 'income' : 'expense') + '">' + (zero ? '⇄ ' : up ? '+' : '−') + money(Math.abs(x.delta || e.amount)) + '<small>' + lbl + '</small></span>' +
+      '<span class="t2">' + when + ' · ' + esc(sub) + '<br>คงเหลือ ' + sgn(x.after) + ' บาท</span></button>';
+  });
+  out.push('<section class="card"><div class="card-h"><h2>รายการเข้าออก · ' + thMonth(S.month) + '</h2><span class="note">ใหม่อยู่บน</span></div><div class="list">' +
+    (list.join('') || '<p class="muted small">เดือนนี้ไม่มีรายการของบัญชีนี้</p>') +
+    '<div class="row open-bal"><span class="t1">ยอดยกมาต้นเดือน</span><span class="amt num">' + sgn(open) + '<small>บาท</small></span><span class="t2">' + (before.length ? 'ยอดหลังรายการสุดท้ายของเดือนก่อน' : 'ยอดตั้งต้นของบัญชี') + '</span></div></div>' +
+    '<p class="note">นับเฉพาะรายการที่บันทึกแล้ว ไม่รวมร่าง · เปลี่ยนเดือนได้ที่ช่องเลือกเดือนด้านบน · แตะรายการเพื่อดูหรือแก้</p></section>');
+  document.getElementById('view').innerHTML = out.join('');
 }
 function statCards(sum) {
   return '<div class="stats">' +
@@ -785,6 +854,7 @@ function rowHTML(e) {
 }
 
 function renderOverview() {
+  if (S.acct) { renderAccount(); return; }
   var r = range();
   var sum = SUM({ book: S.book, from: r.from, to: r.to });
   var counted = L.filter(store, { book: S.book, from: r.from, to: r.to });
@@ -1772,7 +1842,9 @@ document.addEventListener('click', function (ev) {
   if (act === 'bg') { if (ev.target === el && !(F && F.saving) && !(G && G.saving)) closeG(); return; }
   if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && act !== 'nextmode' && act !== 'slow')) return;
   switch (act) {
-    case 'go': S.view = v; render(); window.scrollTo(0, 0); break;
+    case 'go': S.view = v; S.acct = null; render(); window.scrollTo(0, 0); break;
+    case 'acct': S.view = 'overview'; S.acct = id; render(); window.scrollTo(0, 0); break;
+    case 'acctback': S.acct = null; render(); window.scrollTo(0, 0); break;
     case 'book': S.book = v; S.q.categoryId = ''; render(); break;
     case 'new': openForm(); break;
     case 'detail': F = null; detailId = id; renderSheet(); break;
@@ -1800,7 +1872,7 @@ document.addEventListener('click', function (ev) {
     case 'balances': S.view = 'more'; S.open.accounts = true; render(); window.scrollTo(0, 0); break;
     case 'missing': S.view = 'list'; S.q.text = ''; render(); toast('รายการที่มีป้าย “ยังไม่ระบุบัญชี” แตะเพื่อแก้ได้'); break;
     case 'ptab': S.planTab = v; renderPlan(); break;
-    case 'ovtab': S.ovTab = v; renderOverview(); break;
+    case 'ovtab': S.ovTab = v; S.acct = null; renderOverview(); break;
     case 'ctype': S.chart[el.dataset.k] = v; hideTip(); renderOverview(); break;
     case 'sec': S.open[v] = !S.open[v]; renderMore(); break;
     case 'reserve':
